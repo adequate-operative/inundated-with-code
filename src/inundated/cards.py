@@ -23,7 +23,7 @@ def write(con, cfg, dirs, gits) -> str:
             "tags": tags, "extra": c.get("new_tags", []), "lang": c.get("lang", []),
             "kind": c.get("kind") or r["kind"], "mat": c.get("maturity", ""), "auth": c.get("authorship", ""),
             "keep": c.get("keep", ""), "last": r["last"], "commits": r["commits"], "size": r["size"],
-            "hosts": r["hosts"], "flags": r["flags"], "area": r["path"].split("/")[0],
+            "hosts": r["hosts"], "flags": r["flags"], "area": "/".join(r["path"].split("/")[:2]),
             "coll": r["verdict"] == "collection",
         })
     tagc = Counter(t for c in cards for t in c["tags"])

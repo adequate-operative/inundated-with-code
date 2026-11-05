@@ -49,7 +49,8 @@ def rows(con, cfg: Config, dirs: dict[str, Dir], gits: dict[str, dict]) -> list[
             flags.append("unsure")
         last = (gi.get("last_commit") or "")[:10] or (time.strftime("%Y-%m-%d", time.localtime(d.t_newest)) if d.t_newest else "")
         out.append({
-            "path": os.path.relpath(d.path, d.root).replace("\\", "/"),
+            "path": (os.path.basename(d.root) or d.root) + "/" + os.path.relpath(d.path, d.root).replace("\\", "/"),
+            "root": d.root,
             "abs": d.path,
             "verdict": r["verdict"], "kind": r["kind"] or "", "conf": round(r["confidence"] or 0, 2),
             "source": r["source"], "reason": r["reason"] or "",
@@ -76,7 +77,7 @@ def write(con, cfg: Config, dirs, gits) -> tuple[str, str]:
     def tbl(c: Counter) -> str:
         return "\n".join(f"| {k} | {v} |" for k, v in c.most_common())
 
-    md = [f"# inundated inventory\n\nGenerated {time.strftime('%Y-%m-%d %H:%M')} — roots: {', '.join(cfg.roots)}\n",
+    md = [f"# inundated inventory\n\nGenerated {time.strftime('%Y-%m-%d %H:%M')} — roots: {', '.join(sorted({d.root for d in dirs.values()}))}\n",
           "## Verdicts\n| verdict | n |\n|---|---|\n" + tbl(by_v),
           "## Kinds (projects)\n| kind | n |\n|---|---|\n" + tbl(by_k),
           "## Remote hosts\n| host | n |\n|---|---|\n" + tbl(by_h),

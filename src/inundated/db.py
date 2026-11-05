@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS llm_cache (
     k TEXT PRIMARY KEY, backend TEXT, model TEXT, prompt TEXT, response TEXT,
     tokens_in INTEGER, tokens_out INTEGER, created TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS roots (root TEXT PRIMARY KEY, scanned TEXT, dirs INTEGER, files INTEGER, repos INTEGER);
 CREATE TABLE IF NOT EXISTS evidence (path TEXT PRIMARY KEY, hash TEXT, text TEXT, chars INTEGER);
 """
 

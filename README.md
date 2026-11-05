@@ -4,55 +4,129 @@ Scans sprawling code folders, works out where each project starts and ends, flag
 (unpushed commits, dirty trees, repos stranded on hosts you're leaving), and uses cheap LLMs to
 name, summarise and tag every project into a filterable card catalogue.
 
-```
-scan ──► discover ──► evidence ──► classify ──► report (cards.html)
-```
+## Quick start
 
-- **scan**: one filesystem pass (never enters `node_modules`, virtualenvs or build caches) plus
-  read-only git facts.
-- **discover**: top-down project-boundary detection. Rules decide most folders. A judge model
-  is asked only where the rules are unsure. It sees an ASCII subtree, git remotes, and the first
-  lines of source/doc files after MIME sniffing and secret scrubbing.
-- **classify**: one short-context call per project returns a synopsis, tags from a controlled
-  vocabulary, kind, maturity, authorship and a keep signal. Responses are cached, so re-runs only
-  pay for projects that changed.
-- **report**: `out/cards.html` (project cards, click tags to filter), `out/report.html` (table),
-  `out/report.md`.
-
-## Setup
+You need **Python 3.12+**, [**uv**](https://docs.astral.sh/uv/), **git** on your PATH, and **one API
+key** for an OpenAI-compatible model provider. The defaults use [Neuralwatt](https://portal.neuralwatt.com)
+(`gemma-4-31b`), so you need a `NEURALWATT_API_KEY`. See [Models](#models) to use another provider,
+a local model, or no model at all.
 
 ```bash
+git clone https://github.com/adequate-operative/inundated-with-code
+cd inundated-with-code
 uv sync
-uv run inundated init local --root "D:/Code" --git    # personal workspace, its own git repo
-# edit local/inundated.toml ([owner] handles, self_hosts, ...) and put keys in local/.env
+uv run inundated init --root "D:/Code" --handle your-github-username
 ```
 
-`local/` is gitignored by this repo. It holds your config, `.env`, the SQLite database and the
-reports, and `--git` makes it a separate repository, so your data can be versioned and backed up
-privately. The CLI finds `./local/inundated.toml` automatically. You can also point elsewhere with
-`-c PATH` or `INUNDATED_CONFIG`. Paths in the config are relative to the config file.
+`init` creates a `local/` folder holding your personal workspace. Put your key in **`local/.env`**:
 
-## Use
+```ini
+NEURALWATT_API_KEY=sk-...
+```
+
+Then do the whole thing:
 
 ```bash
-uv run inundated scan                          # walk roots + git facts
-uv run inundated discover --judge heuristic    # rules only, no API calls
-uv run inundated context "<folder>" --system   # print exactly what the judge model would see
-uv run inundated ping --backend gemma          # test a model endpoint
-uv run inundated discover                      # rules + judge model for unsure folders
-uv run inundated override "<folder>" container --note "just a folder"
-uv run inundated evidence [--dump]             # per-project evidence packs
-uv run inundated classify                      # synopsis + tags per project
-uv run inundated report                        # out/cards.html, out/report.html, out/report.md
+uv run inundated run --open
 ```
+
+That runs scan → discover → evidence → classify → report and opens `local/out/cards.html`, with
+one card per project and tags you can click to filter. A first run checks your key with one tiny
+call before it starts.
+
+- **Try it cheaply first:** `uv run inundated run --limit 20` classifies only 20 projects.
+- **No key / nothing leaves your machine:** `uv run inundated run --no-llm` gives a rules-only
+  inventory (boundaries, git risk, sizes, dates) with no synopses or tags.
+- **Re-running is cheap:** model answers are cached, so only new or changed projects cost anything.
+  Add `--skip-scan` to reuse the last filesystem scan.
+
+`--root` can be given several times. `--handle` is your username on GitHub/Bitbucket/GitLab. It is
+how inundated tells your repos from third-party clones. Edit both later in `local/inundated.toml`.
+
+## Multiple roots
+
+Scan several folders at once by listing them in `[scan] roots` or repeating `--root`:
+
+```bash
+uv run inundated run --root "D:/Code" --root "E:/OldDrive/src"
+```
+
+Or add them in **separate runs**. Everything goes into the same database and one combined
+catalogue:
+
+```bash
+uv run inundated run --root "D:/Code"
+uv run inundated run --root "E:/OldDrive/src"     # adds to what's there; D:/Code is kept
+uv run inundated roots                            # list what's in the database
+uv run inundated forget "E:/OldDrive/src"         # remove a root again
+```
+
+Re-running a root replaces that root's data and leaves the others alone. Roots must not be nested:
+`D:/Code` together with `D:/Code/Projects` is refused, whether in the same run or against a root
+that's already in the database, because every project would be counted twice. To swap to a
+narrower or wider root, `forget` the old one first.
+
+## What you get
+
+`local/out/cards.html` has a card per project with a name, a 2–3 sentence synopsis, tags (`game-dev`,
+`win32`, `browser-ext`, `music-production`, `yarr`, `toy`, `experiment`, … plus `lang:*`), maturity,
+authorship, a keep/archive hint, last activity, git hosts and warnings (`uncommitted`, `unpushed`,
+`no-remote`, `only-on:<host>`). You can search and filter by tag, folder, maturity, keep and
+authorship. `out/report.html` (sortable table) and `out/report.md` list every folder verdict.
+
+## Where things live
+
+```
+inundated-with-code/        this repo: the tool
+└── local/                  gitignored, yours (optionally its own repo: init --git)
+    ├── inundated.toml      roots, your handles/hosts, rules, model backends
+    ├── .env                API keys
+    ├── inundated.db        scan, verdicts, cached model answers, classifications
+    └── out/                cards.html, report.html, report.md
+```
+
+Run commands from the repo folder; `./local/inundated.toml` is found automatically. To use a
+different workspace, pass `-c PATH` or set `INUNDATED_CONFIG`.
 
 ## Models
 
-Any OpenAI-compatible endpoint works (`type = "openai"`): Neuralwatt, DeepSeek, Ollama, LM Studio
-and so on. Decision models in the Clef/Jev style (`type = "systemone"`, e.g. `clef-flash`) can act as
-the boundary judge. They return calibrated probabilities instead of generated text. A full
-classification of ~1,000 projects is about 3.5M input tokens, under $1 on small open models.
+Backends are defined in `local/inundated.toml`. `[discover] backend` picks the one that settles unsure
+project boundaries, and `[classify] backend` picks the one that writes synopses and tags.
 
-Text sent to a model: file trees, manifest/README/source *heads* (20 lines), git remotes and
-recent commit subjects. Files that look like secrets are never read, and token/password/key
-patterns are redacted. Use a local backend if nothing should leave your machine.
+- **Any OpenAI-compatible API** (`type = "openai"`): set `base_url`, `model` and `api_key_env`
+  (the variable name to read from `.env`). The template has Neuralwatt `gemma-4-31b`,
+  `deepseek-v4.1-flash` and `qwen3.6-35b-fast` ready.
+- **Local, no key:** point the `local` backend at Ollama (`http://localhost:11434/v1`), then set
+  both `backend = "local"`.
+- **Decision models** (`type = "systemone"`, e.g. Neuralwatt `clef-flash`, preview access only) can
+  act as the boundary judge and return real probabilities instead of generated text.
+
+Cost: a full run over ~1,000 projects was about 4.2M input tokens and 150k output tokens, roughly
+$0.70 on `gemma-4-31b`.
+
+What is sent: folder trees, the first 20 lines of READMEs/manifests/source files, git remote URLs
+and recent commit subjects. Secret-looking files (`.env`, keys, credentials) are never read, and
+token/password patterns are redacted from what is.
+
+## Individual steps
+
+`run` is these in order. Use them directly to redo one stage or to tune the rules.
+
+| command | does |
+|---|---|
+| `inundated scan [--root PATH ...]` | walk the roots (never enters `node_modules`, venvs, build caches) and collect read-only git facts |
+| `inundated discover [--judge heuristic\|llm-ambiguous\|llm-all] [--root PATH]` | decide project boundaries: rules first, the model only where unsure (default). Covers every root in the database unless `--root` is given |
+| `inundated evidence [--dump]` | build the per-project text the model reads (`--dump` writes them to `out/evidence/`) |
+| `inundated classify [--limit N] [--only TEXT]` | synopsis, tags and labels per project |
+| `inundated report [--open]` | write the cards, table and markdown |
+
+Tuning:
+
+```bash
+uv run inundated context "D:/Code/some/folder" --system   # exactly what the model sees for a folder
+uv run inundated override "D:/Code/some/folder" container --note "just a folder"   # pin a verdict
+uv run inundated ping --backend gemma                      # test a backend
+```
+
+Rule settings such as folders kept whole (`sealed_hints`), organising-folder names and prefixes,
+skipped folders and hosts you're leaving are in `local/inundated.toml`, with comments.

@@ -281,14 +281,16 @@ def _overrides(con) -> dict[str, dict]:
 
 
 def discover(cfg: Config, con, dirs: dict[str, Dir], gits: dict[str, dict],
-             judge: str | None = None, client: Client | None = None, log=print) -> dict[str, Verdict]:
+             judge: str | None = None, client: Client | None = None, log=print,
+             roots: list[str] | None = None) -> dict[str, Verdict]:
     judge = judge or cfg.judge
     if judge != "heuristic" and client is None:
         raise ValueError("judge mode needs a client")
     ovr = _overrides(con)
-    roots = {key(r) for r in cfg.roots}
+    roots = roots or cfg.roots
+    root_keys = {key(r) for r in roots}
     results: dict[str, Verdict] = {}
-    level = [r for r in cfg.roots if r in dirs]
+    level = [r for r in roots if r in dirs]
     container_of: dict[str, str | None] = {r: None for r in level}
     sealed_kids: set[str] = set()
     pool = ThreadPoolExecutor(cfg.judge_workers)
@@ -303,7 +305,7 @@ def discover(cfg: Config, con, dirs: dict[str, Dir], gits: dict[str, dict],
                 verdicts[p] = Verdict(o["verdict"], 1.0, o.get("kind"), source="override",
                                       reasons=[o.get("note") or "manual override"])
                 continue
-            h = heuristic(d, dirs, cfg, key(p) in roots, gits, sealed=p in sealed_kids)
+            h = heuristic(d, dirs, cfg, key(p) in root_keys, gits, sealed=p in sealed_kids)
             verdicts[p] = h
             if h.source != "root" and (judge == "llm-all" or (judge == "llm-ambiguous" and h.confidence < cfg.confident)):
                 ask.append(p)
@@ -345,7 +347,7 @@ def discover(cfg: Config, con, dirs: dict[str, Dir], gits: dict[str, dict],
         level = nxt
         lvl_no += 1
     pool.shutdown()
-    save(con, results)
+    save(con, results, roots)
     return results
 
 
@@ -364,9 +366,12 @@ def _nested(d: Dir, dirs: dict[str, Dir], results: dict[str, Verdict], owner: st
         stack.extend((gc, parent) for gc in c.children)
 
 
-def save(con, results: dict[str, Verdict]) -> None:
+def save(con, results: dict[str, Verdict], roots: list[str]) -> None:
+    """Replace verdicts under these roots only; other roots' items stay."""
+    from .roots import is_under_any
     with con:
-        con.execute("DELETE FROM items")
+        old = [p for (p,) in con.execute("SELECT path FROM items") if is_under_any(p, roots)]
+        con.executemany("DELETE FROM items WHERE path=?", [(p,) for p in old])
         con.executemany(
             "INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?)",
             [(p, v.verdict, v.kind, v.confidence, v.source, " | ".join(v.reasons), v.parent_item,

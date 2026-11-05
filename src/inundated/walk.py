@@ -52,11 +52,11 @@ def _is_env(path: str) -> bool:
     return os.path.isfile(os.path.join(path, "pyvenv.cfg")) or os.path.isdir(os.path.join(path, "conda-meta"))
 
 
-def walk(cfg: Config, log=print) -> dict[str, Dir]:
+def walk(cfg: Config, roots: list[str], log=print) -> dict[str, Dir]:
     dirs: dict[str, Dir] = {}
     skip = cfg.prune_always | cfg.prune
     t0, last = time.time(), time.time()
-    for root in cfg.roots:
+    for root in roots:
         stack = [(root, None, 0)]
         while stack:
             path, parent, depth = stack.pop()
@@ -125,9 +125,10 @@ def walk(cfg: Config, log=print) -> dict[str, Dir]:
     return dirs
 
 
-def save(con, dirs: dict[str, Dir]) -> None:
+def save(con, dirs: dict[str, Dir], roots: list[str]) -> None:
+    """Replace the rows of these roots only; other roots in the database are untouched."""
     with con:
-        con.execute("DELETE FROM dirs")
+        con.executemany("DELETE FROM dirs WHERE root=?", [(r,) for r in roots])
         con.executemany(
             "INSERT INTO dirs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(d.path, d.parent, d.root, d.depth, d.n_files, d.n_bytes, d.newest, d.oldest,

@@ -60,7 +60,7 @@ def collect(path: str) -> dict:
     return out
 
 
-def collect_all(con, paths: list[str], workers: int = 8, log=print) -> None:
+def collect_all(con, paths: list[str], roots: list[str], workers: int = 8, log=print) -> None:
     rows = []
     with ThreadPoolExecutor(workers) as ex:
         for i, info in enumerate(ex.map(collect, paths), 1):
@@ -68,7 +68,9 @@ def collect_all(con, paths: list[str], workers: int = 8, log=print) -> None:
             if i % 25 == 0:
                 log(f"  … git {i}/{len(paths)}")
     with con:
-        con.execute("DELETE FROM git")
+        from .roots import is_under_any
+        old = [p for (p,) in con.execute("SELECT path FROM git") if is_under_any(p, roots)]
+        con.executemany("DELETE FROM git WHERE path=?", [(p,) for p in old])
         con.executemany(
             "INSERT INTO git VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(r["path"], r["ok"], r.get("error"), r.get("toplevel"), r.get("branch"), j(r.get("branches", [])),
