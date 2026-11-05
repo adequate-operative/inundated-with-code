@@ -1,0 +1,111 @@
+# inundated workspace config. Paths may use forward slashes; ~ is expanded.
+# The database and out/ folder are created next to this file.
+
+[scan]
+roots = ["~/code"]                 # folder(s) to scan, e.g. ["D:/Code", "C:/Users/me/src"]
+# Directory names skipped anywhere (case-insensitive). Their presence is still recorded as a signal.
+exclude_names = ["$Recycle.Bin", "System Volume Information", "DeliveryOptimization"]
+# Whole paths skipped (dependency caches etc.).
+exclude_paths = []                 # e.g. ["~/go/pkg"]
+# Never descended into, ever.
+prune_always = ["node_modules", ".git", ".hg", ".svn", "bower_components"]
+# Heavy/generated folders: not descended into, but noted (e.g. ".godot" hints a Godot project).
+prune = [
+    ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".tox", ".ruff_cache",
+    ".godot", ".import", "Library", "Temp", "Intermediate", "Binaries", "DerivedDataCache", "Saved",
+    "target", "obj", "dist", ".gradle", ".vs", ".next", ".nuxt", ".parcel-cache", ".cache",
+    "Pods", "DerivedData", "coverage", ".terraform", "site-packages", "vendor", "packages",
+]
+git_workers = 8
+
+[owner]
+# Remote owners/workspaces that are yours (GitHub user, Bitbucket workspaces, GitLab groups...).
+handles = []
+# Commit author emails/names that are you (used to spot modified forks).
+emails = []
+names = []
+# Git hosts that are yours (anything pushed there is yours by definition).
+self_hosts = []                    # e.g. ["gitea.example.lan", "nas"]
+
+[discover]
+# heuristic      : rules only, no LLM calls
+# llm-ambiguous  : ask the judge model only where rules are unsure (default)
+# llm-all        : ask the judge model about every folder it visits
+judge = "llm-ambiguous"
+confident = 0.8          # heuristic confidence at/above which no LLM call is made
+backend = "gemma"        # which [backends.*] judges boundaries (clef | gemma | deepseek | qwen | local)
+workers = 4
+# Children of these are catalogued as ONE item each, never split further (third-party bundles, SDKs).
+sealed_hints = ["_3rdparty", "3rdparty", "thirdparty", "third_party", "libs", "_libs", "sdks", "downloads"]
+# Folder-name prefixes you use for organising folders (e.g. "_Retired", "ZZZ_Old"); a prefixed folder
+# holding several code folders and little loose code is treated as a container.
+organiser_prefixes = ["_"]
+container_hints = [
+    "_retired", "retired", "_export",
+    "experiments", "dumpingground", "archive", "_archive", "old", "misc", "_scripts",
+    "projects", "gamedev", "web", "libs", "tmp",
+]
+
+[report]
+# Hosts you are leaving: repos whose only remotes are here get an "only-on:<host>" flag.
+at_risk_hosts = []                 # e.g. ["bitbucket.org"]
+
+[classify]
+backend = "gemma"        # synopsis + tags model
+
+[context]
+tree_depth = 3
+tree_max_lines = 140
+head_lines = 20
+judge_head_files = 8
+judge_head_chars = 9000
+evidence_head_files = 16
+evidence_head_chars = 16000
+
+# --- Model backends -----------------------------------------------------------
+# type "openai"    = OpenAI-compatible /chat/completions (generative; Neuralwatt, Ollama, ...)
+# type "systemone" = decision models (Clef/Jev style) at {base_url}/systemone: typed questions in,
+#                    probabilities out, billed on input tokens only. clef-flash is preview on
+#                    Neuralwatt; a 404 with a valid key means it isn't enabled for your account yet.
+# Keys come from the env var named in api_key_env (.env next to this file is loaded).
+# Neuralwatt list prices (Nov 2026, per 1M tokens in/out): gemma-4-31b 0.144/0.42,
+# deepseek-v4.1-flash 0.15/0.60, qwen3.6-35b-fast 0.29/1.15. Check GET {base_url}/models for current ones.
+
+[backends.clef]
+type = "systemone"
+base_url = "https://api.neuralwatt.com/v1"
+model = "clef-flash"
+api_key_env = "NEURALWATT_API_KEY"
+
+[backends.gemma]
+type = "openai"
+base_url = "https://api.neuralwatt.com/v1"
+model = "gemma-4-31b"
+api_key_env = "NEURALWATT_API_KEY"
+json_mode = true
+max_tokens = 900
+# extra_body = { reasoning_effort = "low" }   # these models can reason; keep it cheap
+
+[backends.deepseek]
+type = "openai"
+base_url = "https://api.neuralwatt.com/v1"
+model = "deepseek-v4.1-flash"
+api_key_env = "NEURALWATT_API_KEY"
+json_mode = true
+max_tokens = 900
+
+[backends.qwen]
+type = "openai"
+base_url = "https://api.neuralwatt.com/v1"
+model = "qwen3.6-35b-fast"
+api_key_env = "NEURALWATT_API_KEY"
+json_mode = true
+max_tokens = 900
+
+[backends.local]
+type = "openai"
+base_url = "http://localhost:11434/v1"       # Ollama (also serves clef-flash via /v1/systemone)
+model = "gemma4"
+api_key_env = ""
+json_mode = true
+max_tokens = 400

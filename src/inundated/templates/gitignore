@@ -1,0 +1,5 @@
+# personal inundated workspace
+.env
+*.db-wal
+*.db-shm
+out/evidence/

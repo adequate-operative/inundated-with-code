@@ -1,0 +1,16 @@
+# Personal workspace: config, API keys, database and reports. Keep it in its own repo.
+/local/
+
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+/.claude/
+
+# never commit run data or keys from a workspace created elsewhere
+*.db
+*.db-wal
+*.db-shm
+.env
+/out/
