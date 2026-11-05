@@ -1,9 +1,8 @@
 # inundated
 
-Make sense of years of accumulated code projects. inundated walks your code folders, figures out
-where each project starts and ends, collects git facts (remotes, unpushed work, dirty trees), and
-asks a cheap LLM for a name, synopsis and tags per project. The result is a filterable card view
-of everything you have.
+Scans sprawling code folders, works out where each project starts and ends, flags git risk
+(unpushed commits, dirty trees, repos stranded on hosts you're leaving), and uses cheap LLMs to
+name, summarise and tag every project into a filterable card catalogue.
 
 ```
 scan ──► discover ──► evidence ──► classify ──► report (cards.html)
