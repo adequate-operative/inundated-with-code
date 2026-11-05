@@ -61,10 +61,20 @@ uv run inundated roots                            # list what's in the database
 uv run inundated forget "E:/OldDrive/src"         # remove a root again
 ```
 
-Re-running a root replaces that root's data and leaves the others alone. Roots must not be nested:
-`D:/Code` together with `D:/Code/Projects` is refused, whether in the same run or against a root
-that's already in the database, because every project would be counted twice. To swap to a
-narrower or wider root, `forget` the old one first.
+Scanning a path always means "make the catalogue's picture of this path fresh":
+
+- **Same root again:** its data is replaced, and other roots are untouched.
+- **A folder inside a root you already scanned** (`--root "D:/Code/Projects"` after `D:/Code`):
+  only that subtree is rescanned. It stays part of `D:/Code`, the folder totals above it are
+  updated, and discovery reruns from `D:/Code`, which is fast because model answers are cached.
+  Use this to refresh the corner you've been working in without rescanning the whole drive.
+- **A parent of a root you already scanned** (`D:/Code` after `D:/Code/Projects`): the parent
+  absorbs it, so you end up with one root and no duplicates. Overrides and cached model answers are
+  stored by path and carry over.
+
+One thing is refused: naming a folder *and* its parent **in the same command**
+(`--root "D:/Code" --root "D:/Code/Projects"`). The second is already part of the first, so it's
+almost certainly a mistake.
 
 ## What you get
 

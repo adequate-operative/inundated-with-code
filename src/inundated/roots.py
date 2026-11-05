@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass, field
 from itertools import combinations
 
 from .config import ConfigNotFound, key, norm
@@ -29,7 +30,7 @@ def stored(con) -> list[str]:
     return rows or [r[0] for r in con.execute("SELECT DISTINCT root FROM dirs ORDER BY root")]
 
 
-def validate(new: list[str], con=None) -> list[str]:
+def validate(new: list[str]) -> list[str]:
     """Normalise, de-duplicate and check roots. Raises RootError with a fix-it message."""
     out: list[str] = []
     for r in map(norm, new):
@@ -44,15 +45,49 @@ def validate(new: list[str], con=None) -> list[str]:
         if under(a, b) or under(b, a):
             inner, outer = (a, b) if under(a, b) else (b, a)
             raise RootError(f"roots overlap in this run: {inner} is inside {outer}. Scan only one of them.")
-    if con is not None:
-        for r in out:
-            for e in stored(con):
-                if under(r, e) or under(e, r):
-                    inner, outer = (r, e) if under(r, e) else (e, r)
-                    raise RootError(
-                        f"{r} overlaps a root already in the database ({e}): {inner} is inside {outer}.\n"
-                        f"  remove the old one first:  inundated forget \"{e}\"")
     return out
+
+
+@dataclass
+class Target:
+    """One folder to walk, and how its results go into the database."""
+    path: str                 # folder to walk
+    label: str                # root it belongs to in the database
+    kind: str                 # "root": (re)scan a whole root | "refresh": a subtree of an existing root
+    absorbs: list[str] = field(default_factory=list)   # stored roots inside this one, replaced by it
+
+
+def plan(requested: list[str], con) -> list[Target]:
+    """Decide what each requested path means given what is already stored.
+
+    - same as a stored root, or new and unrelated: scan it as a root
+    - inside a stored root: refresh that subtree; it stays part of the stored root
+    - contains stored roots: scan it as a root and absorb them (their data is replaced)
+    Nested paths within ONE request are an error (see validate)."""
+    have = stored(con)
+    targets: list[Target] = []
+    for r in validate(requested):
+        outer = next((e for e in have if under(r, e)), None)
+        if outer:
+            known = {key(p): p for (p,) in con.execute("SELECT path FROM dirs WHERE root=?", (outer,))}
+            p = r
+            while key(p) not in known and key(p) != key(outer):
+                p = os.path.dirname(p)   # nearest folder the database already knows
+            p = known.get(key(p), outer)
+            targets.append(Target(p, outer, "refresh" if key(p) != key(outer) else "root"))
+        else:
+            same = next((e for e in have if key(e) == key(r)), r)
+            targets.append(Target(same, same, "root", [e for e in have if under(e, r)]))
+    # a full rescan of a root makes refreshes inside it redundant
+    full = {key(t.label) for t in targets if t.kind == "root"}
+    return [t for t in targets if t.kind == "root" or key(t.label) not in full]
+
+
+def drop_root_rows(con, root: str) -> None:
+    """Remove a stored root's directory rows and roots entry (used when a parent absorbs it)."""
+    with con:
+        con.execute("DELETE FROM dirs WHERE root=?", (root,))
+        con.execute("DELETE FROM roots WHERE root=?", (root,))
 
 
 def record(con, root: str, dirs: int, files: int, repos: int) -> None:

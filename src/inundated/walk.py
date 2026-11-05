@@ -125,17 +125,58 @@ def walk(cfg: Config, roots: list[str], log=print) -> dict[str, Dir]:
     return dirs
 
 
+def _insert(con, ds) -> None:
+    con.executemany(
+        "INSERT OR REPLACE INTO dirs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [(d.path, d.parent, d.root, d.depth, d.n_files, d.n_bytes, d.newest, d.oldest,
+          d.t_files, d.t_bytes, d.t_newest, d.t_projecty,
+          j(dict(d.ext.most_common(25))), j(dict(d.t_ext.most_common(25))),
+          j(d.markers), j(d.pruned), d.git, d.error) for d in ds],
+    )
+
+
 def save(con, dirs: dict[str, Dir], roots: list[str]) -> None:
     """Replace the rows of these roots only; other roots in the database are untouched."""
     with con:
         con.executemany("DELETE FROM dirs WHERE root=?", [(r,) for r in roots])
-        con.executemany(
-            "INSERT INTO dirs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            [(d.path, d.parent, d.root, d.depth, d.n_files, d.n_bytes, d.newest, d.oldest,
-              d.t_files, d.t_bytes, d.t_newest, d.t_projecty,
-              j(dict(d.ext.most_common(25))), j(dict(d.t_ext.most_common(25))),
-              j(d.markers), j(d.pruned), d.git, d.error) for d in dirs.values()],
-        )
+        _insert(con, dirs.values())
+
+
+def save_subtree(con, ds: list[Dir], sub: str, label: str) -> None:
+    """Replace one subtree of a stored root with a fresh walk of it, then fix the totals of
+    every folder above it. `ds` was walked with `sub` as its own root."""
+    from .roots import is_under_any
+    parent, base = con.execute("SELECT parent, depth FROM dirs WHERE path=?", (sub,)).fetchone()
+    for d in ds:
+        d.root = label
+        d.depth += base
+        if d.path == sub:
+            d.parent = parent
+    with con:
+        old = [p for (p,) in con.execute("SELECT path FROM dirs WHERE root=?", (label,)) if is_under_any(p, [sub])]
+        con.executemany("DELETE FROM dirs WHERE path=?", [(p,) for p in old])
+        _insert(con, ds)
+        _reaggregate(con, parent)
+
+
+def _reaggregate(con, path: str | None) -> None:
+    """Recompute subtree totals for `path` and each ancestor, from their children's rows."""
+    while path:
+        row = con.execute("SELECT n_files, n_bytes, newest, ext, parent FROM dirs WHERE path=?", (path,)).fetchone()
+        if not row:
+            return
+        n_files, n_bytes, newest, ext, parent = row
+        t_files, t_bytes, t_newest, t_ext, t_proj = n_files, n_bytes, newest, Counter(uj(ext, {})), 0
+        for cf, cb, cn, cext, cproj, cmark, cgit in con.execute(
+                "SELECT t_files, t_bytes, t_newest, t_ext, t_projecty, markers, git FROM dirs WHERE parent=?", (path,)):
+            t_files += cf
+            t_bytes += cb
+            t_newest = max(t_newest, cn)
+            t_ext.update(uj(cext, {}))
+            t_proj += cproj + (1 if cgit or any(m in ft.STRONG_MARKERS for m in uj(cmark, [])) else 0)
+        con.execute("UPDATE dirs SET t_files=?, t_bytes=?, t_newest=?, t_ext=?, t_projecty=? WHERE path=?",
+                    (t_files, t_bytes, t_newest, j(dict(t_ext.most_common(25))), t_proj, path))
+        path = parent
 
 
 def load(con) -> dict[str, Dir]:

@@ -22,46 +22,62 @@ def _ctx(args):
     return cfg, con
 
 
-def _scan_roots(args, cfg, con) -> list[str]:
-    """Roots for a scan: --root flags if given, else [scan] roots. Validated (exist, no nesting, no
-    overlap with other roots already in the database; re-scanning the same root is fine)."""
-    return R.validate(getattr(args, "root", None) or cfg.roots, con)
+def _scan_targets(args, cfg, con) -> list[R.Target]:
+    """What to walk: --root flags if given, else [scan] roots. Nested paths in one request are an
+    error; overlap with roots already in the database is resolved (refresh or absorb)."""
+    return R.plan(getattr(args, "root", None) or cfg.roots, con)
 
 
 def _db_roots(args, con) -> list[str]:
-    """Roots to (re)judge: --root flags if given, else every root in the database."""
+    """Roots to (re)judge: the stored roots containing the --root paths, else every stored root.
+    Discovery always runs from a root down, so a subtree maps to its root."""
     have = R.stored(con)
-    if getattr(args, "root", None):
-        want = [C.norm(r) for r in args.root]
-        missing = [r for r in want if C.key(r) not in {C.key(h) for h in have}]
-        if missing:
-            raise R.RootError(f"not scanned yet: {', '.join(missing)}  (run: inundated scan --root ...)")
-        return [h for h in have if C.key(h) in {C.key(w) for w in want}]
     if not have:
         raise R.RootError("nothing scanned yet: run  inundated scan  (or  inundated run)")
-    return have
+    if not getattr(args, "root", None):
+        return have
+    out = []
+    for w in map(C.norm, args.root):
+        h = next((h for h in have if C.key(h) == C.key(w) or R.under(w, h)), None)
+        if h is None:
+            raise R.RootError(f"not scanned yet: {w}  (run: inundated scan --root \"{w}\")")
+        if h not in out:
+            out.append(h)
+    return out
 
 
 def cmd_scan(args):
     cfg, con = _ctx(args)
-    roots = _scan_roots(args, cfg, con)
+    targets = _scan_targets(args, cfg, con)
     t = time.time()
-    log(f"walking {', '.join(roots)} …")
-    dirs = walk.walk(cfg, roots, log=log)
-    walk.save(con, dirs, roots)
+    for tg in targets:
+        if tg.kind == "refresh":
+            log(f"refreshing {tg.path}  (part of {tg.label})")
+        else:
+            log(f"scanning {tg.path}" + (f"  (absorbs {', '.join(tg.absorbs)})" if tg.absorbs else ""))
+    dirs = walk.walk(cfg, [tg.path for tg in targets], log=log)
+    full = [tg for tg in targets if tg.kind == "root"]
+    for tg in full:
+        for a in tg.absorbs:
+            R.drop_root_rows(con, a)
+    walk.save(con, {p: d for p, d in dirs.items() if d.root in {tg.path for tg in full}}, [tg.path for tg in full])
+    for tg in targets:
+        if tg.kind == "refresh":
+            walk.save_subtree(con, [d for d in dirs.values() if d.root == tg.path], tg.path, tg.label)
+    for tg in full:
+        mine = [d for d in dirs.values() if d.root == tg.path]
+        R.record(con, tg.path, len(mine), sum(d.n_files for d in mine), sum(1 for d in mine if d.git))
     repos = [d.path for d in dirs.values() if d.git]
-    for r in roots:
-        mine = [d for d in dirs.values() if d.root == r]
-        R.record(con, r, len(mine), sum(d.n_files for d in mine), sum(1 for d in mine if d.git))
     log(f"{len(dirs):,} dirs, {sum(d.n_files for d in dirs.values()):,} files, {len(repos)} git roots "
         f"({time.time() - t:.0f}s)")
     if not args.no_git:
         log("collecting git facts …")
-        gitinfo.collect_all(con, repos, roots, cfg.git_workers, log=log)
-    others = [r for r in R.stored(con) if r not in roots]
+        gitinfo.collect_all(con, repos, [tg.path for tg in targets], cfg.git_workers, log=log)
+    labels = list(dict.fromkeys(tg.label for tg in targets))
+    others = [r for r in R.stored(con) if r not in labels]
     log(f"done in {time.time() - t:.0f}s → {cfg.db_path}"
         + (f"\n(also in this database from earlier runs: {', '.join(others)})" if others else ""))
-    return roots
+    return labels
 
 
 def _loaded(con):
@@ -165,14 +181,19 @@ def cmd_run(args):
     cfg, con = _ctx(args)
     t = time.time()
     # check roots before anything costs time or money
-    roots = _db_roots(args, con) if args.skip_scan else _scan_roots(args, cfg, con)
+    if args.skip_scan:
+        walk_paths = roots = _db_roots(args, con)
+    else:
+        targets = _scan_targets(args, cfg, con)
+        walk_paths = [tg.path for tg in targets]
+        roots = list(dict.fromkeys(tg.label for tg in targets))   # discovery runs from whole roots
     llm = not args.no_llm
     if llm:
         log("checking model backends …")
         _preflight(cfg, [cfg.judge_backend, cfg.classify_backend])
     c = args.config
     steps = [
-        ("scan", lambda: cmd_scan(NS(config=c, no_git=False, root=roots)), not args.skip_scan),
+        ("scan", lambda: cmd_scan(NS(config=c, no_git=False, root=walk_paths)), not args.skip_scan),
         ("discover", lambda: cmd_discover(NS(config=c, judge=None if llm else "heuristic", backend=None,
                                              root=roots)), True),
         ("evidence", lambda: cmd_evidence(NS(config=c, dump=False)), llm),
